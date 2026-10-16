@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "iem_compatibility",
+  "version": "${version}",
+  "name": "IEM_Compatibility",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "GPL-3.0",
+  "icon": "assets/iem_compatibility/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-datagen": [
+      "com.ruskserver.iem_compatibility.client.Iem_compatibilityDataGenerator"
+    ],
+    "client": [
+      "com.ruskserver.iem_compatibility.client.Iem_compatibilityClient"
+    ],
+    "main": [
+      "com.ruskserver.iem_compatibility.Iem_compatibility"
+    ]
+  },
+  "mixins": [
+    "iem_compatibility.mixins.json",
+    {
+      "config": "iem_compatibility.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
