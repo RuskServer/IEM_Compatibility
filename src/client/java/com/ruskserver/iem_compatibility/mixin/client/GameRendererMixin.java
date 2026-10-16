@@ -24,16 +24,16 @@ abstract class GameRendererMixin {
     @Unique
     private int iem$worldTimer = -1;
 
-    /** /iemgpu: ワールドの描画全体 (地形・エンティティ・空など。ポストエフェクトの前) の GPU の時間 */
+    /** /iemgpu: ワールドの描画全体 (地形・エンティティ・空など。ポストエフェクトの前) の GPU の時間。この間はパイプラインごとにも測る */
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void iem$beginWorld(CallbackInfo ci) {
         PassTimer.beginFrame();
-        this.iem$worldTimer = PassTimer.beginOutside("world");
+        this.iem$worldTimer = PassTimer.beginWorld();
     }
 
     @Inject(method = "renderLevel", at = @At("TAIL"))
     private void iem$endWorld(CallbackInfo ci) {
-        PassTimer.endOutside(this.iem$worldTimer);
+        PassTimer.endWorld(this.iem$worldTimer);
     }
 
     /** 投影は揺れ・視野の変化を掛けた後 (ワールドを描くのに使う投影) */

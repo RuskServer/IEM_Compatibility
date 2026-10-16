@@ -14,22 +14,30 @@ import java.util.Map;
 import java.util.OptionalLong;
 
 /**
- * ポストエフェクトのパスごとと、ワールドの描画全体の GPU の時間 (/iemgpu で付け外し)。パスの描画の前後に GPU のタイムスタンプを書き、
- * 数フレーム後に結果が届いたらシェーダーの名前ごとに足して、なめらかにした値 (ms) を画面の左上に出す。
- * 同じシェーダーを何度も使うパス (フレアのぼかしなど) は合計、使われなくなったパスはだんだん 0 に近づけて消す
+ * GPU の時間 (/iemgpu で付け外し): ワールドの描画全体 (world)、その中のパイプライン (コアシェーダー) ごと、ポストエフェクトのパスごと。
+ * 区切りに GPU のタイムスタンプを書き、数フレーム後に結果が届いたら名前ごとに足して、なめらかにした値 (ms) を画面の左上に出す。
+ * ワールドの中は、パイプラインを切り替えてから次に切り替える (かレンダーパスを閉じる) までをそのパイプラインの時間にする
+ * (字下げして出す。world の内訳なので合計には入れない)。同じ名前は合計、使われなくなった名前はだんだん 0 に近づけて消す
  */
 public final class PassTimer {
-    /** 結果を待つ間に使い回すフレームの数と、1 フレームで測るパスの数の上限 */
-    private static final int FRAMES = 4, MAX_PASSES = 96;
+    /** 結果を待つ間に使い回すフレームの数と、1 フレームのタイムスタンプ・区間の数の上限 */
+    private static final int FRAMES = 4, MAX_STAMPS = 4096, MAX_RECORDS = 4096;
     /** なめらかにする割合 (1 フレームごと) と、表示する行の数 */
     private static final double SMOOTHING = 0.05;
-    private static final int LINES = 20;
+    private static final int LINES = 28;
+    /** world の内訳 (パイプラインごと) の名前の頭 */
+    private static final String SEGMENT = "  ";
 
     private static boolean enabled;
     private static GpuQueryPool pool;
-    private static final String[][] names = new String[FRAMES][MAX_PASSES];
-    private static final int[] counts = new int[FRAMES];
+    private static final int[] stamps = new int[FRAMES];
+    private static final int[] recordCounts = new int[FRAMES];
+    private static final String[][] names = new String[FRAMES][MAX_RECORDS];
+    private static final int[][] starts = new int[FRAMES][MAX_RECORDS];
+    private static final int[][] ends = new int[FRAMES][MAX_RECORDS];
     private static int frame;
+    /** ワールドを描いている間 (パイプラインごとに測る) */
+    private static boolean inWorld;
     private static final Map<String, Double> averages = new HashMap<>();
 
     private PassTimer() {
@@ -39,62 +47,106 @@ public final class PassTimer {
     static boolean toggle() {
         enabled = !enabled;
         averages.clear();
-        java.util.Arrays.fill(counts, 0);
+        java.util.Arrays.fill(stamps, 0);
+        java.util.Arrays.fill(recordCounts, 0);
         return enabled;
-    }
-
-    /** ポストエフェクトの前に 1 回: 次の記録の場所に移り、そこにあった (FRAMES フレーム前の) 結果を集める */
-    public static void beginFrame() {
-        if (!enabled) return;
-        if (pool == null) pool = RenderSystem.getDevice().createTimestampQueryPool(FRAMES * MAX_PASSES * 2);
-        frame = (frame + 1) % FRAMES;
-        collect(frame);
-        counts[frame] = 0;
     }
 
     public static boolean enabled() {
         return enabled;
     }
 
-    /** パスを描く前。戻り値は end に渡す (測らない時は -1) */
-    public static int begin(RenderPass pass, String name) {
-        if (!enabled || pool == null || counts[frame] >= MAX_PASSES) return -1;
-        int i = counts[frame]++;
-        names[frame][i] = name;
-        int index = (frame * MAX_PASSES + i) * 2;
+    /** ワールドを描く前に 1 回: 次の記録の場所に移り、そこにあった (FRAMES フレーム前の) 結果を集める */
+    public static void beginFrame() {
+        if (!enabled) return;
+        if (pool == null) pool = RenderSystem.getDevice().createTimestampQueryPool(FRAMES * MAX_STAMPS);
+        frame = (frame + 1) % FRAMES;
+        collect(frame);
+        stamps[frame] = 0;
+        recordCounts[frame] = 0;
+    }
+
+    // ---- タイムスタンプと区間 ----
+
+    private static int stamp(RenderPass pass) {
+        if (!enabled || pool == null || stamps[frame] >= MAX_STAMPS) return -1;
+        int index = frame * MAX_STAMPS + stamps[frame]++;
         pass.writeTimestamp(pool, index);
         return index;
     }
 
-    public static void end(RenderPass pass, int index) {
-        if (index >= 0) pass.writeTimestamp(pool, index + 1);
-    }
-
-    /** レンダーパスの外 (ワールドの描画全体など) を測り始める。戻り値は endOutside に渡す */
-    public static int beginOutside(String name) {
-        if (!enabled || pool == null || counts[frame] >= MAX_PASSES) return -1;
-        int i = counts[frame]++;
-        names[frame][i] = name;
-        int index = (frame * MAX_PASSES + i) * 2;
+    private static int stampOutside() {
+        if (!enabled || pool == null || stamps[frame] >= MAX_STAMPS) return -1;
+        int index = frame * MAX_STAMPS + stamps[frame]++;
         RenderSystem.getDevice().createCommandEncoder().writeTimestamp(pool, index);
         return index;
     }
 
-    public static void endOutside(int index) {
-        if (index >= 0) RenderSystem.getDevice().createCommandEncoder().writeTimestamp(pool, index + 1);
+    private static int open(String name, int start) {
+        if (start < 0 || recordCounts[frame] >= MAX_RECORDS) return -1;
+        int record = recordCounts[frame]++;
+        names[frame][record] = name;
+        starts[frame][record] = start;
+        ends[frame][record] = -1;
+        return record;
     }
 
+    private static void close(int record, int end) {
+        if (record >= 0 && end >= 0 && record < recordCounts[frame]) ends[frame][record] = end;
+    }
+
+    // ---- ポストエフェクトのパス ----
+
+    /** パスを描く前。戻り値は end に渡す (測らない時は -1) */
+    public static int begin(RenderPass pass, String name) {
+        return enabled ? open(name, stamp(pass)) : -1;
+    }
+
+    public static void end(RenderPass pass, int record) {
+        if (record >= 0) close(record, stamp(pass));
+    }
+
+    // ---- ワールドの描画全体と、その中のパイプラインごと ----
+
+    /** ワールドを描き始める時。戻り値は endWorld に渡す */
+    public static int beginWorld() {
+        if (!enabled) return -1;
+        inWorld = true;
+        return open("world", stampOutside());
+    }
+
+    public static void endWorld(int record) {
+        inWorld = false;
+        if (record >= 0) close(record, stampOutside());
+    }
+
+    /** レンダーパスでパイプラインを切り替えた時: 開いている区間 (前のパイプライン) を閉じ、新しいパイプラインの区間を開く。戻り値は次に渡す */
+    public static int switchPipeline(RenderPass pass, int open, String pipeline) {
+        if (!enabled || !inWorld) return -1;
+        int at = stamp(pass);
+        close(open, at);
+        return open(SEGMENT + pipeline, at);
+    }
+
+    /** レンダーパスを閉じる時: 開いている区間を閉じる */
+    public static void closePipeline(RenderPass pass, int open) {
+        if (open >= 0) close(open, stamp(pass));
+    }
+
+    // ---- 集める・出す ----
+
     private static void collect(int slot) {
-        int count = counts[slot];
+        int count = stamps[slot];
         if (count == 0) return;
-        OptionalLong[] stamps = pool.getValues(slot * MAX_PASSES * 2, count * 2);
+        OptionalLong[] values = pool.getValues(slot * MAX_STAMPS, count);
         double nanosPerTick = RenderSystem.getDevice().getDeviceInfo().timestampPeriod();
         Map<String, Double> sums = new HashMap<>();
-        for (int i = 0; i < count; i++) {
-            OptionalLong start = stamps[2 * i], end = stamps[2 * i + 1];
-            if (start.isEmpty() || end.isEmpty()) return;   // まだ届いていない (このフレームは集めない)
-            double ms = (end.getAsLong() - start.getAsLong()) * nanosPerTick / 1e6;
-            sums.merge(names[slot][i], ms, Double::sum);
+        for (int r = 0; r < recordCounts[slot]; r++) {
+            int end = ends[slot][r];
+            if (end < 0) continue;
+            OptionalLong a = values[starts[slot][r] - slot * MAX_STAMPS], b = values[end - slot * MAX_STAMPS];
+            if (a.isEmpty() || b.isEmpty()) return;   // まだ届いていない (このフレームは集めない)
+            sums.merge(names[slot][r], (b.getAsLong() - a.getAsLong()) * nanosPerTick / 1e6, Double::sum);
         }
         for (Map.Entry<String, Double> entry : sums.entrySet()) {
             averages.merge(entry.getKey(), entry.getValue(), (old, now) -> old + (now - old) * SMOOTHING);
@@ -103,14 +155,14 @@ public final class PassTimer {
         averages.values().removeIf(ms -> ms < 0.001);
     }
 
-    /** 画面の左上に、時間のかかっている順に出す */
+    /** 画面の左上に、時間のかかっている順に出す (world の内訳は字下げ) */
     static void draw(GuiGraphicsExtractor graphics) {
         if (!enabled) return;
         Font font = Minecraft.getInstance().font;
         List<Map.Entry<String, Double>> rows = new ArrayList<>(averages.entrySet());
         rows.sort(Map.Entry.<String, Double>comparingByValue().reversed());
         double total = 0;
-        for (Map.Entry<String, Double> row : rows) total += row.getValue();
+        for (Map.Entry<String, Double> row : rows) if (!row.getKey().startsWith(SEGMENT)) total += row.getValue();
         List<String> lines = new ArrayList<>();
         lines.add(String.format("IEM GPU %.2f ms (world + post)", total));
         for (int i = 0; i < Math.min(LINES, rows.size()); i++) {
