@@ -3,11 +3,20 @@ package com.ruskserver.iem_compatibility.client;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.commands.RenderPass;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.fog.FogData;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.Display;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomModelData;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
@@ -19,15 +28,18 @@ import java.nio.ByteBuffer;
 
 /**
  * リソースパックの数値の画素 (iem_control.glsl。空の段が画面の左下に書く値) の代わりに、ゲームが描くのに使った値を
- * uniform IemFrameValues (ポストエフェクトの JSON の uniforms。tools/post_effects.py) として渡す。並びは iem_control_read.glsl と同じ vec4 が 16 個:
- * 0 情報 (mod が書いた、雨の強さ、太陽がある、月がある)、1〜3 カメラの回転、4〜7 投影、8 霧の色、9 空の色、10・11 霧の距離、12 太陽の向き、13 月の向き、14 カメラの位置、15 バイザーの濡れ具合 (プラグインから届いた値。届いていなければ -1)。
+ * uniform IemFrameValues (ポストエフェクトの JSON の uniforms。tools/post_effects.py) として渡す。並びは iem_control_read.glsl と同じ vec4 が 17 個:
+ * 0 情報 (mod が書いた、雨の強さ、太陽がある、月がある)、1〜3 カメラの回転、4〜7 投影、8 霧の色、9 空の色、10・11 霧の距離、12 太陽の向き、13 月の向き、14 カメラの位置、15 バイザーの濡れ具合 (プラグインから届いた値。届いていなければ -1)、
+ * 16 照明弾 (位置 (視点の座標) と明るさ。照明弾の印のアイテムディスプレイから。無ければ明るさ -1)。
  * 値は空の段が書くものと同じ: 回転は空を描く時の ModelViewMat (視点の回転)、投影は揺れ・視野の変化込み (GameRenderer.renderLevel)、
  * 太陽と月の向きは SkyRenderer の四角の中心 (Y で -90°、X で角度、高さ 100) を視点の座標にしたもの
  */
 public final class FrameValues {
     /** ポストエフェクトの uniform の名前 (JSON の uniforms のキー) */
     public static final String NAME = "IemFrameValues";
-    private static final int VEC4S = 16;
+    private static final int VEC4S = 17;
+    /** 照明弾の印 (ImpossbleEscapeMC の SignalFlares が出すアイテムディスプレイのアイテムの模型。明るさはアイテムの色の赤) */
+    private static final Identifier FLARE_MODEL = Identifier.fromNamespaceAndPath("iem", "flare_marker");
     private static final int SIZE = VEC4S * 16;
 
     private static final float[] values = new float[VEC4S * 4];
@@ -70,6 +82,7 @@ public final class FrameValues {
         put(13, moon.x, moon.y, moon.z, 0f);
         put(14, wrap(camera.pos.x), wrap(camera.pos.y), wrap(camera.pos.z), 0f);
         put(15, visorWetness, 0f, 0f, 0f);
+        putFlare(view, camera.pos, level.worldPartialTicks);
         captured = true;
     }
 
@@ -94,6 +107,29 @@ public final class FrameValues {
     /** IemFrameValues を持つポストパスを描く直前に、JSON の既定値の代わりにこちらを渡す */
     public static void bind(RenderPass pass) {
         if (ready && buffer != null) pass.setUniform(NAME, buffer);
+    }
+
+    /** 照明弾: 照明弾の印のうち一番明るいものの位置 (視点の座標) と明るさ。無ければ明るさ -1 (パックは照明弾の光を描かない) */
+    private static void putFlare(Matrix4fc view, Vec3 camera, float partialTick) {
+        ClientLevel world = Minecraft.getInstance().level;
+        float best = -1f;
+        Vector3f at = new Vector3f();
+        if (world != null) {
+            for (Entity entity : world.entitiesForRendering()) {
+                if (!(entity instanceof Display.ItemDisplay display)) continue;
+                ItemStack item = display.getItemStack();
+                if (!FLARE_MODEL.equals(item.get(DataComponents.ITEM_MODEL))) continue;
+                CustomModelData data = item.get(DataComponents.CUSTOM_MODEL_DATA);
+                Integer color = data != null ? data.getColor(0) : null;
+                float power = color != null ? ((color >> 16) & 255) / 255f : 0f;
+                if (power <= best) continue;
+                best = power;
+                Vec3 position = entity.getPosition(partialTick);
+                at.set((float) (position.x - camera.x), (float) (position.y - camera.y), (float) (position.z - camera.z));
+            }
+        }
+        if (best >= 0f) view.transformDirection(at);
+        put(16, at.x, at.y, at.z, best);
     }
 
     private static void put(int vec4, float x, float y, float z, float w) {

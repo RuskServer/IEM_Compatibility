@@ -9,6 +9,7 @@ import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -19,6 +20,21 @@ abstract class GameRendererMixin {
     @Shadow
     @Final
     private GameRenderState gameRenderState;
+
+    @Unique
+    private int iem$worldTimer = -1;
+
+    /** /iemgpu: ワールドの描画全体 (地形・エンティティ・空など。ポストエフェクトの前) の GPU の時間 */
+    @Inject(method = "renderLevel", at = @At("HEAD"))
+    private void iem$beginWorld(CallbackInfo ci) {
+        PassTimer.beginFrame();
+        this.iem$worldTimer = PassTimer.beginOutside("world");
+    }
+
+    @Inject(method = "renderLevel", at = @At("TAIL"))
+    private void iem$endWorld(CallbackInfo ci) {
+        PassTimer.endOutside(this.iem$worldTimer);
+    }
 
     /** 投影は揺れ・視野の変化を掛けた後 (ワールドを描くのに使う投影) */
     @Inject(method = "renderLevel", at = @At(value = "INVOKE",
@@ -31,6 +47,5 @@ abstract class GameRendererMixin {
     @Inject(method = "applyPostEffects", at = @At("HEAD"))
     private void iem$beforePostEffects(CallbackInfo ci) {
         FrameValues.upload();
-        PassTimer.beginFrame();
     }
 }
