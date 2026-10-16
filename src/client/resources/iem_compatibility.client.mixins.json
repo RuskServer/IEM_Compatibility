@@ -4,6 +4,8 @@
   "package": "com.ruskserver.iem_compatibility.mixin.client",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "GameRendererMixin",
+    "PostPassMixin"
   ],
   "injectors": {
     "defaultRequire": 1
