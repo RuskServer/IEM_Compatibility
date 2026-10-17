@@ -6,6 +6,7 @@ import com.mojang.renderpearl.api.commands.RenderPass;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.util.profiling.Profiler;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -14,7 +15,8 @@ import java.util.Map;
 import java.util.OptionalLong;
 
 /**
- * GPU の時間 (/iemgpu で付け外し): ワールドの描画全体 (world)、その中のパイプライン (コアシェーダー) ごと、ポストエフェクトのパスごと。
+ * GPU の時間 (/iemgpu で付け外し): フレーム全体 (frame。GameRenderer.render)、ワールドの描画全体 (world)、その中のパイプライン (コアシェーダー) ごと、
+ * ポストエフェクトのパスごと、GUI (gui)。1 フレームの実時間 (CPU も含む) も出し、GPU の時間と比べて GPU が律速かを見られるようにする。
  * 区切りに GPU のタイムスタンプを書き、数フレーム後に結果が届いたら名前ごとに足して、なめらかにした値 (ms) を画面の左上に出す。
  * ワールドの中は、パイプラインを切り替えてから次に切り替える (かレンダーパスを閉じる) までをそのパイプラインの時間にする
  * (字下げして出す。world の内訳なので合計には入れない)。同じ名前は合計、使われなくなった名前はだんだん 0 に近づけて消す
@@ -39,6 +41,9 @@ public final class PassTimer {
     /** ワールドを描いている間 (パイプラインごとに測る) */
     private static boolean inWorld;
     private static final Map<String, Double> averages = new HashMap<>();
+    /** 1 フレームの実時間 (ms。なめらかにした値) と、前のフレームの始まり */
+    private static double frameMillis;
+    private static long lastFrameStart;
 
     private PassTimer() {
     }
@@ -56,14 +61,22 @@ public final class PassTimer {
         return enabled;
     }
 
-    /** ワールドを描く前に 1 回: 次の記録の場所に移り、そこにあった (FRAMES フレーム前の) 結果を集める */
+    /** フレームの初め (GameRenderer.render の最初) に 1 回: 次の記録の場所に移り、そこにあった (FRAMES フレーム前の) 結果を集める */
     public static void beginFrame() {
         if (!enabled) return;
+        long now = System.nanoTime();
+        if (lastFrameStart != 0) {
+            double ms = (now - lastFrameStart) / 1e6;
+            frameMillis = frameMillis == 0 ? ms : frameMillis + (ms - frameMillis) * SMOOTHING;
+        }
+        lastFrameStart = now;
+        Profiler.get().push("iem_gpuTimer");
         if (pool == null) pool = RenderSystem.getDevice().createTimestampQueryPool(FRAMES * MAX_STAMPS);
         frame = (frame + 1) % FRAMES;
         collect(frame);
         stamps[frame] = 0;
         recordCounts[frame] = 0;
+        Profiler.get().pop();
     }
 
     // ---- タイムスタンプと区間 ----
@@ -93,6 +106,16 @@ public final class PassTimer {
 
     private static void close(int record, int end) {
         if (record >= 0 && end >= 0 && record < recordCounts[frame]) ends[frame][record] = end;
+    }
+
+    // ---- レンダーパスの外 (フレーム全体・GUI) ----
+
+    public static int beginOutside(String name) {
+        return enabled ? open(name, stampOutside()) : -1;
+    }
+
+    public static void endOutside(int record) {
+        if (record >= 0) close(record, stampOutside());
     }
 
     // ---- ポストエフェクトのパス ----
@@ -155,16 +178,26 @@ public final class PassTimer {
         averages.values().removeIf(ms -> ms < 0.001);
     }
 
-    /** 画面の左上に、時間のかかっている順に出す (world の内訳は字下げ) */
+    /**
+     * 画面の左上に出す: 1 行目は 1 フレームの実時間と GPU の時間 (GPU の時間が実時間に近ければ GPU が律速)、2 行目は GPU の時間の内訳
+     * (world・ポストエフェクト・gui・その他)、その下に時間のかかっている順 (world の内訳は字下げ。frame は 1 行目に出すので除く)
+     */
     static void draw(GuiGraphicsExtractor graphics) {
         if (!enabled) return;
         Font font = Minecraft.getInstance().font;
         List<Map.Entry<String, Double>> rows = new ArrayList<>(averages.entrySet());
+        rows.removeIf(row -> row.getKey().equals("frame"));
         rows.sort(Map.Entry.<String, Double>comparingByValue().reversed());
-        double total = 0;
-        for (Map.Entry<String, Double> row : rows) if (!row.getKey().startsWith(SEGMENT)) total += row.getValue();
+        double frameGpu = averages.getOrDefault("frame", 0.0), world = averages.getOrDefault("world", 0.0), gui = averages.getOrDefault("gui", 0.0);
+        double post = 0;
+        for (Map.Entry<String, Double> row : rows) {
+            String name = row.getKey();
+            if (!name.startsWith(SEGMENT) && !name.equals("world") && !name.equals("gui")) post += row.getValue();
+        }
         List<String> lines = new ArrayList<>();
-        lines.add(String.format("IEM GPU %.2f ms (world + post)", total));
+        lines.add(String.format("frame %.1f ms (%.0f fps)  GPU %.1f ms (%.0f%%)", frameMillis, frameMillis > 0 ? 1000 / frameMillis : 0,
+                frameGpu, frameMillis > 0 ? 100 * frameGpu / frameMillis : 0));
+        lines.add(String.format("GPU: world %.2f + post %.2f + gui %.2f + other %.2f", world, post, gui, Math.max(0, frameGpu - world - post - gui)));
         for (int i = 0; i < Math.min(LINES, rows.size()); i++) {
             lines.add(String.format("%6.2f  %s", rows.get(i).getValue(), rows.get(i).getKey()));
         }

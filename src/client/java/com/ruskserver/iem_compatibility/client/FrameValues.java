@@ -11,6 +11,7 @@ import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.profiling.Profiler;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
@@ -55,6 +56,7 @@ public final class FrameValues {
 
     /** ワールドを描く前 (投影を決めた所) に、このフレームの値を拾う */
     public static void capture(LevelRenderState level, Matrix4fc projection) {
+        Profiler.get().push("iem_frameValues");
         CameraRenderState camera = level.cameraRenderState;
         SkyRenderState sky = level.skyRenderState;
         FogData fog = camera.fogData;
@@ -84,6 +86,7 @@ public final class FrameValues {
         put(15, visorWetness, 0f, 0f, 0f);
         putFlare(view, camera.pos, level.worldPartialTicks);
         captured = true;
+        Profiler.get().pop();
     }
 
     /** ポストエフェクトの前に 1 回: 拾った値をバッファに書く (拾えなかったフレームは渡さない = パックは画面の数値の画素を読む) */
