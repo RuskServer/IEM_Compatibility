@@ -1,0 +1,4 @@
+{
+  "audio_probe.mono": {"sounds": [{"name": "iem_compatibility:audio_probe_mono", "attenuation_distance": 32}]},
+  "audio_probe.stereo": {"sounds": [{"name": "iem_compatibility:audio_probe_stereo", "attenuation_distance": 32}]}
+}

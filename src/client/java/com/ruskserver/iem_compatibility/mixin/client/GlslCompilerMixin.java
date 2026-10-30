@@ -1,7 +1,6 @@
 package com.ruskserver.iem_compatibility.mixin.client;
 
 import com.mojang.renderpearl.frontend.shaders.GlslCompiler;
-import com.ruskserver.iem_compatibility.client.CoreSwitches;
 import org.lwjgl.util.shaderc.Shaderc;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -19,7 +18,5 @@ abstract class GlslCompilerMixin {
     private void iem$defineMod(CallbackInfoReturnable<Long> cir) {
         long options = cir.getReturnValueJ();
         Shaderc.shaderc_compile_options_add_macro_definition(options, "IEM_MOD", "");
-        // 確かめ用 (/iemcore) に切った機能
-        for (String define : CoreSwitches.defines()) Shaderc.shaderc_compile_options_add_macro_definition(options, define, "");
     }
 }

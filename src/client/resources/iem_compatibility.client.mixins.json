@@ -4,6 +4,9 @@
   "package": "com.ruskserver.iem_compatibility.mixin.client",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "AudioLibraryMixin",
+    "AudioSoundEngineMixin",
+    "AudioChannelMixin",
     "FrontendRenderPassMixin",
     "GameRendererMixin",
     "GlslCompilerMixin",

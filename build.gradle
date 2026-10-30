@@ -28,6 +28,10 @@ fabricApi {
 }
 
 repositories {
+    maven {
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
+    }
     // Add repositories to retrieve artifacts from in here.
     // You should only use this when depending on other mods because
     // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
@@ -41,6 +45,9 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    implementation "maven.modrinth:yacl:${project.yacl_version}"
+    compileOnly "maven.modrinth:modmenu:${project.modmenu_version}"
+    runtimeOnly "maven.modrinth:modmenu:${project.modmenu_version}"
 }
 
 processResources {
@@ -102,3 +109,18 @@ publishing {
         // retrieving dependencies.
     }
 }
+
+// 音響ポリシーはMinecraftを起動せず検証する。
+tasks.register('compileAudioTest', JavaCompile) {
+    source = files('src/client/java/com/ruskserver/iem_compatibility/client/audio/AudioPolicy.java',
+            'src/client/java/com/ruskserver/iem_compatibility/client/audio/AcousticMath.java',
+            'src/audioTest/java/com/ruskserver/iem_compatibility/client/audio/AudioPolicyTest.java')
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('classes/audioTest')
+}
+tasks.register('audioTest', JavaExec) {
+    dependsOn 'compileAudioTest'
+    classpath = files(layout.buildDirectory.dir('classes/audioTest'))
+    mainClass = 'com.ruskserver.iem_compatibility.client.audio.AudioPolicyTest'
+}
+tasks.named('check') { dependsOn 'audioTest' }

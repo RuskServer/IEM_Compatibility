@@ -12,13 +12,18 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 
-import java.util.ArrayList;
-import java.util.List;
 
 public class Iem_compatibilityClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        com.ruskserver.iem_compatibility.client.audio.AudioCommands.register();
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> dispatcher.register(
+                ClientCommands.literal("iemconfig").executes(command -> {
+                    Minecraft minecraft = Minecraft.getInstance();
+                    minecraft.execute(() -> minecraft.gui.setScreen(IemConfigScreen.create(minecraft.gui.screen())));
+                    return 1;
+                })));
         // サーバーの光: 受け取れることをサーバーに知らせ (チャンネルの登録)、届いたらテクスチャに書く。
         // プラグインはこのチャンネルを持つクライアントにはテキストディスプレイ (データの画素) を出さずにこちらで送る
         PayloadTypeRegistry.clientboundPlay().register(LightPayload.TYPE, LightPayload.CODEC);
@@ -34,27 +39,6 @@ public class Iem_compatibilityClient implements ClientModInitializer {
 
         // GPU の時間: ワールド全体・その中のパイプラインごと・ポストエフェクトのパスごと (/iemgpu で付け外し、画面の左上に出す)
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("iem_compatibility", "pass_timer"), (graphics, delta) -> PassTimer.draw(graphics));
-        // 確かめ用: コアシェーダーの差し替えを機能ごとに切る (/iemcore <機能|all> <on|off>。/iemcore で今の状態)
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> {
-            var root = ClientCommands.literal("iemcore").executes(command -> {
-                command.getSource().sendFeedback(Component.literal("切っている機能: " + (CoreSwitches.off().isEmpty() ? "なし" : String.join(", ", CoreSwitches.off()))
-                        + " (切れる機能: " + String.join(", ", CoreSwitches.FEATURES) + ", all)"));
-                return 1;
-            });
-            List<String> choices = new ArrayList<>(CoreSwitches.FEATURES);
-            choices.add("all");
-            for (String feature : choices) {
-                for (boolean on : new boolean[]{true, false}) {
-                    root.then(ClientCommands.literal(feature).then(ClientCommands.literal(on ? "on" : "off").executes(command -> {
-                        for (String f : feature.equals("all") ? CoreSwitches.FEATURES : List.of(feature)) CoreSwitches.set(f, on);
-                        command.getSource().sendFeedback(Component.literal(feature + " を" + (on ? "戻しました" : "切りました") + "。シェーダーを作り直します"));
-                        Minecraft.getInstance().reloadResourcePacks();
-                        return 1;
-                    })));
-                }
-            }
-            dispatcher.register(root);
-        });
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> dispatcher.register(
                 ClientCommands.literal("iemgpu").executes(command -> {
                     boolean on = PassTimer.toggle();
