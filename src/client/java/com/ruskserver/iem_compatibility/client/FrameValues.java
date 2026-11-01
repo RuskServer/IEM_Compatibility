@@ -51,12 +51,23 @@ public final class FrameValues {
     /** バイザーの濡れ具合 (0..1。プラグインの ScreenEffectService が iem:visor_wet で送る。届いていなければ -1 = パックの値を使う) */
     private static float visorWetness = -1f;
 
-    private static volatile int muzzleMode;
-    private static volatile long muzzleUntil;
+    private static final MuzzlePulse muzzle = new MuzzlePulse();
+    private static long frameBinds;
 
     public static void setMuzzle(int mode) {
-        muzzleMode = mode >= 1 && mode <= 3 ? mode : 0;
-        muzzleUntil = System.nanoTime() + 100_000_000L;
+        muzzle.receive(mode, System.nanoTime());
+    }
+
+    public static void testMuzzle() {
+        muzzle.inject(1, System.nanoTime());
+    }
+
+    public static void clearMuzzle() {
+        muzzle.clear();
+    }
+
+    public static String muzzleStatus() {
+        return muzzle.status(System.nanoTime()) + " | フレーム値=" + ready + " UBO反映=" + frameBinds;
     }
 
     private FrameValues() {
@@ -91,7 +102,7 @@ public final class FrameValues {
         put(12, sun.x, sun.y, sun.z, 0f);
         put(13, moon.x, moon.y, moon.z, 0f);
         put(14, wrap(camera.pos.x), wrap(camera.pos.y), wrap(camera.pos.z), 0f);
-        put(15, visorWetness, System.nanoTime() < muzzleUntil ? muzzleMode : 0f, 0f, 0f);
+        put(15, visorWetness, 0f, 0f, 0f);
         putFlare(view, camera.pos, level.worldPartialTicks);
         captured = true;
         Profiler.get().pop();
@@ -105,6 +116,8 @@ public final class FrameValues {
         if (buffer == null) {
             buffer = RenderSystem.getDevice().createBuffer(() -> "IEM frame values", GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, SIZE);
         }
+        // captureから描画までの間に届いた発射も反映し、未描画の点灯を消灯通知で失わない。
+        values[15 * 4 + 1] = muzzle.sample(System.nanoTime());
         for (int i = 0; i < values.length; i++) data.putFloat(i * 4, values[i]);
         data.position(0).limit(SIZE);
         RenderSystem.getDevice().createCommandEncoder().writeToBuffer(buffer.slice(), data);
@@ -117,7 +130,10 @@ public final class FrameValues {
 
     /** IemFrameValues を持つポストパスを描く直前に、JSON の既定値の代わりにこちらを渡す */
     public static void bind(RenderPass pass) {
-        if (ready && buffer != null) pass.setUniform(NAME, buffer);
+        if (ready && buffer != null) {
+            pass.setUniform(NAME, buffer);
+            frameBinds++;
+        }
     }
 
     /** 照明弾: 照明弾の印のうち一番明るいものの位置 (視点の座標) と明るさ。無ければ明るさ -1 (パックは照明弾の光を描かない) */

@@ -124,3 +124,17 @@ tasks.register('audioTest', JavaExec) {
     mainClass = 'com.ruskserver.iem_compatibility.client.audio.AudioPolicyTest'
 }
 tasks.named('check') { dependsOn 'audioTest' }
+
+// 発射と消灯が同じ描画前に届く経路を、ゲーム起動なしで回帰検証する。
+tasks.register('compileMuzzleTest', JavaCompile) {
+    source = files('src/client/java/com/ruskserver/iem_compatibility/client/MuzzlePulse.java',
+            'src/muzzleTest/java/com/ruskserver/iem_compatibility/client/MuzzlePulseTest.java')
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('classes/muzzleTest')
+}
+tasks.register('muzzleTest', JavaExec) {
+    dependsOn 'compileMuzzleTest'
+    classpath = files(layout.buildDirectory.dir('classes/muzzleTest'))
+    mainClass = 'com.ruskserver.iem_compatibility.client.MuzzlePulseTest'
+}
+tasks.named('check') { dependsOn 'muzzleTest' }

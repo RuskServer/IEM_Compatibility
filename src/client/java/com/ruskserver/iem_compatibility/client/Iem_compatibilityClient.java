@@ -37,8 +37,18 @@ public class Iem_compatibilityClient implements ClientModInitializer {
         ClientPlayConnectionEvents.DISCONNECT.register((listener, minecraft) -> minecraft.execute(() -> {
             LightData.clear();
             FrameValues.setVisorWetness(-1f);
-            FrameValues.setMuzzle(0);
+            FrameValues.clearMuzzle();
         }));
+
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> dispatcher.register(
+                ClientCommands.literal("iemmuzzle").executes(command -> {
+                    command.getSource().sendFeedback(Component.literal(FrameValues.muzzleStatus()));
+                    return 1;
+                }).then(ClientCommands.literal("test").executes(command -> {
+                    FrameValues.testMuzzle();
+                    command.getSource().sendFeedback(Component.literal("腰撃ちマズルフラッシュをローカルで試験します"));
+                    return 1;
+                }))));
 
         // GPU の時間: ワールド全体・その中のパイプラインごと・ポストエフェクトのパスごと (/iemgpu で付け外し、画面の左上に出す)
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("iem_compatibility", "pass_timer"), (graphics, delta) -> PassTimer.draw(graphics));
