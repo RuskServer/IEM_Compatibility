@@ -51,6 +51,14 @@ public final class FrameValues {
     /** バイザーの濡れ具合 (0..1。プラグインの ScreenEffectService が iem:visor_wet で送る。届いていなければ -1 = パックの値を使う) */
     private static float visorWetness = -1f;
 
+    private static volatile int muzzleMode;
+    private static volatile long muzzleUntil;
+
+    public static void setMuzzle(int mode) {
+        muzzleMode = mode >= 1 && mode <= 3 ? mode : 0;
+        muzzleUntil = System.nanoTime() + 100_000_000L;
+    }
+
     private FrameValues() {
     }
 
@@ -83,7 +91,7 @@ public final class FrameValues {
         put(12, sun.x, sun.y, sun.z, 0f);
         put(13, moon.x, moon.y, moon.z, 0f);
         put(14, wrap(camera.pos.x), wrap(camera.pos.y), wrap(camera.pos.z), 0f);
-        put(15, visorWetness, 0f, 0f, 0f);
+        put(15, visorWetness, System.nanoTime() < muzzleUntil ? muzzleMode : 0f, 0f, 0f);
         putFlare(view, camera.pos, level.worldPartialTicks);
         captured = true;
         Profiler.get().pop();

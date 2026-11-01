@@ -30,11 +30,14 @@ public class Iem_compatibilityClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(LightPayload.TYPE, (payload, context) -> LightData.set(payload.cells()));
         ClientLifecycleEvents.CLIENT_STARTED.register(LightData::register);
         // バイザーの濡れ具合: プラグインはこのチャンネルを持つクライアントには段階ごとのエフェクトを付け替えず、値を送る
+        PayloadTypeRegistry.clientboundPlay().register(MuzzlePayload.TYPE, MuzzlePayload.CODEC);
+        ClientPlayNetworking.registerGlobalReceiver(MuzzlePayload.TYPE, (payload, context) -> FrameValues.setMuzzle(payload.mode()));
         PayloadTypeRegistry.clientboundPlay().register(VisorWetPayload.TYPE, VisorWetPayload.CODEC);
         ClientPlayNetworking.registerGlobalReceiver(VisorWetPayload.TYPE, (payload, context) -> FrameValues.setVisorWetness(payload.wetness()));
         ClientPlayConnectionEvents.DISCONNECT.register((listener, minecraft) -> minecraft.execute(() -> {
             LightData.clear();
             FrameValues.setVisorWetness(-1f);
+            FrameValues.setMuzzle(0);
         }));
 
         // GPU の時間: ワールド全体・その中のパイプラインごと・ポストエフェクトのパスごと (/iemgpu で付け外し、画面の左上に出す)
